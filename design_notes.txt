@@ -1,0 +1,136 @@
+========================================================================
+Beavers Choice Paper — Multi-Agent System | Design Notes
+========================================================================
+
+1. OVERVIEW
+-----------
+This system automates three back-office workflows for Beavers Choice Paper:
+inventory checks / restocking, quote generation, and order fulfillment. It is
+built with the `smolagents` framework and communicates entirely via text. All
+implementation lives in project_starter.py, in the section marked
+"YOUR MULTI AGENT STARTS HERE".
+
+Framework: smolagents 1.26.0
+Model:     gpt-4o-mini, served through the OpenAI-compatible Vocareum proxy
+           (https://openai.vocareum.com/v1) via smolagents.OpenAIServerModel.
+API key:   loaded from config.env (UDACITY_OPENAI_API_KEY).
+
+NOTE on dependencies: the pinned smolagents 0.1.0 could not import against the
+installed transformers 5.x / huggingface_hub 1.x (it referenced removed symbols
+such as `is_soundfile_availble` and `is_offline_mode`). We upgraded to
+smolagents 1.26.0, which works with the current packages and uses the modern
+`managed_agents` orchestration API. requirements.txt was updated accordingly.
+
+
+2. ARCHITECTURE (4 agents — within the 5-agent limit)
+-----------------------------------------------------
+A manager/orchestrator delegates to three specialist worker agents:
+
+                 +-----------------------------+
+  request+date ->|   Orchestrator (CodeAgent)  |-> single text reply to customer
+                 +--------------+--------------+
+        +-----------------------+------------------------+
+        v                       v                        v
+  Inventory Agent          Quoting Agent            Ordering Agent
+ (ToolCallingAgent)      (ToolCallingAgent)       (ToolCallingAgent)
+  full snapshot +         catalog pricing +        cash + financial
+  stock checks +          bulk discount +          health check +
+  restock decisions       historical quotes        record sale + ETA
+
+- The three workers are ToolCallingAgents: deterministic, cheap tool use over
+  the database.
+- The orchestrator is a CodeAgent created with
+  managed_agents=[inventory_agent, quoting_agent, ordering_agent]. It plans the
+  workflow in Python and calls each worker as a callable (e.g.
+  inventory_agent(task="...")), then returns one customer-facing reply via
+  final_answer().
+
+
+3. AGENTS AND THEIR TOOLS
+-------------------------
+Shared tool (available to all workers):
+  * find_catalog_item(description)
+      Resolves fuzzy customer wording (e.g. "A4 glossy paper",
+      "heavy cardstock (white)") to EXACT catalog names using difflib +
+      word-overlap scoring over the provided `paper_supplies` list. This
+      prevents transaction failures from mismatched item names.
+
+Inventory Agent
+  * check_item_stock       -> get_stock_level
+  * get_inventory_snapshot -> get_all_inventory
+  * restock_item           -> get_cash_balance (affordability guard) +
+                              create_transaction ('stock_orders') +
+                              get_supplier_delivery_date
+
+Quoting Agent
+  * get_unit_price         -> catalog unit-price lookup (paper_supplies)
+  * search_similar_quotes  -> search_quote_history
+  * calculate_quote        -> tiered bulk discount
+                              (>=1000: 15%, >=500: 10%, >=100: 5%, else 0%)
+
+Ordering Agent
+  * get_current_cash       -> get_cash_balance
+  * financial_health_check -> generate_financial_report (run before large
+                              orders; also the internal reporting tool)
+  * place_order            -> get_stock_level (verify) +
+                              create_transaction ('sales') +
+                              get_supplier_delivery_date
+  * get_delivery_estimate  -> get_supplier_delivery_date
+
+Every provided helper function (project_starter.py lines 74-581) is exercised.
+generate_sample_inventory and init_database run at startup via
+init_database(db_engine) in the test harness.
+
+
+4. DATA FLOW FOR ONE REQUEST
+----------------------------
+1. run_test_scenarios() loads quote_requests_sample.csv, sorts by request_date,
+   and tracks running cash / inventory value.
+2. For each request it calls process_customer_request(request, date, cash, inv),
+   which pins the authoritative request date and runs the orchestrator.
+3. Orchestrator: parse items/quantities -> inventory_agent resolves exact names
+   and checks stock -> restock if short (cash permitting) -> quoting_agent prices
+   with bulk discount -> ordering_agent runs a health check for large orders and
+   records sales -> compose one reply.
+4. The harness recomputes the financial report, prints updated cash/inventory,
+   and appends the result. After all requests it prints the final financial
+   report and writes test_results.csv.
+
+
+5. KEY DESIGN DECISION — AUTHORITATIVE DATES
+--------------------------------------------
+The README stresses always passing correct dates between agents. In testing, the
+orchestrator sometimes delegated a sub-task WITHOUT the request date, and the
+sub-agent then invented a date (e.g. 2023-10-05). Because the database is seeded
+on 2025-01-01, an as-of date in 2023 returns zero stock, so valid orders were
+wrongly rejected as "out of stock".
+
+Fix: the true request date is pinned in a module global (CURRENT_REQUEST_DATE),
+set by process_customer_request() and cleared in a finally block. Every
+date-taking tool routes its date through _effective_date(), which uses the
+pinned date when present. This removes the LLM from the date-passing loop and
+guarantees all inventory/cash/sales operations use the correct request date,
+while agents still see a date argument for clarity.
+
+
+6. PRICING CONVENTION
+---------------------
+Consistent with quotes.csv, customers are charged the catalog unit price per
+unit, with a bulk discount surfaced in the quote; restock cost is the catalog
+unit price per unit. Recorded sales transactions use catalog unit prices so cash
+tracking stays exact.
+
+
+7. OUTPUTS
+----------
+- Per-request agent responses and running cash / inventory (stdout)
+- Final financial report (stdout)
+- test_results.csv: request_id, request_date, cash_balance, inventory_value,
+  response
+
+
+8. HOW TO RUN
+-------------
+  pip install -r requirements.txt          # smolagents==1.26.0
+  # ensure config.env contains UDACITY_OPENAI_API_KEY
+  python project_starter.py                # runs the 20 sample scenarios
