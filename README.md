@@ -1,10 +1,10 @@
-# Munder Difflin Multi-Agent System Project
+# Beavers Choice Paper Multi-Agent System Project
 
-Welcome to the starter code repository for the **Munder Difflin Paper Company Multi-Agent System Project**! This repository contains the starter code and tools you will need to design, build, and test a multi-agent system that supports core business operations at a fictional paper manufacturing company.
+Welcome to the starter code repository for the **Beavers Choice Paper Multi-Agent System Project**! This repository contains the starter code and tools you will need to design, build, and test a multi-agent system that supports core business operations at a fictional paper manufacturing company.
 
 ## Project Context
 
-You’ve been hired as an AI consultant by Munder Difflin Paper Company, a fictional enterprise looking to modernize their workflows. They need a smart, modular **multi-agent system** to automate:
+You’ve been hired as an AI consultant by Beavers Choice Paper, a fictional enterprise looking to modernize their workflows. They need a smart, modular **multi-agent system** to automate:
 
 - **Inventory checks** and restocking decisions
 - **Quote generation** for incoming sales inquiries
